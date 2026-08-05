@@ -1,243 +1,238 @@
 # Emergency Announcement Buttons on a Network Paging Console
 
-Making an announcement repeat, and holding strobes lit until an All Clear, using AXIS Audio
+How to make an announcement repeat and keep strobes flashing until an All Clear, using AXIS Audio
 Manager Pro sessions and console event rules.
 
-Validated against AMP Pro 5.1.34 (API v1.2) and an AXIS C6110 paging console. Behaviour on other
-versions should be re-verified rather than assumed.
+Tested against AMP Pro 5.1.34 (API v1.2) and an AXIS C6110 console. On other versions, re-verify
+before trusting any of this.
 
 ---
 
 ## The problem
 
-Out of the box, a button on a network paging console fires a one-shot announcement. The audio plays
-once. The strobes, being audio-synchronised, flash while it plays and stop when it stops.
+A stock console button fires a one-shot announcement. The audio plays once, the strobes flash
+while it plays (they're audio-synced), and then everything stops. For an emergency that's not
+good enough. Someone who walks in thirty seconds late has no idea anything happened. Someone in
+a loud area or wearing hearing protection never knew in the first place.
 
-For an emergency that is not enough. Anyone who arrives thirty seconds late has no idea an emergency
-was declared. Anyone in a loud area, wearing hearing protection, or deaf or hard of hearing has
-nothing at all. What is needed is:
+So you need two things the console doesn't do out of the box:
 
-- the announcement plays **twice**, so late listeners get the message; and
-- the strobes **keep flashing indefinitely** after the audio ends, until an All Clear is pressed.
+- the announcement plays **twice**
+- the strobes **keep flashing** after the audio ends, until someone presses All Clear
 
-The goal is to achieve that with configuration only — no per-device programming, no middleware, and
-nothing that has to keep running after the integrator leaves.
+And you want it done with configuration only. No per-device programming, no middleware, nothing
+that has to keep running after you leave.
 
 ## The pattern
 
-Pre-create *audio sessions* on the server, each carrying its own priority, visual profile (strobe
-colour) and target zones. The console's buttons then do nothing but start and stop those sessions
-over HTTP.
+Pre-create audio sessions on the server. Each session carries its own priority, visual profile
+(strobe colour), and target zones. The buttons just start and stop sessions over HTTP.
 
 ```
 button press  ->  HTTP POST  ->  named session  ->  speakers + strobes
                                  (priority, colour, targets)
 ```
 
-Two properties of the platform make the rest work:
+Two platform behaviors do the heavy lifting:
 
-- **A repeat count of zero means play forever.** Any file can be looped indefinitely.
-- **Audio-synchronised visual profiles flash for as long as the session is playing audio — and
-  silence counts as audio.**
+- repeat count `0` means play forever
+- audio-synced visual profiles flash as long as the session is playing audio — and **silence
+  counts as audio**
 
-Put those together and the light hold is a session that plays a **file of pure silence on infinite
-repeat**. Inaudible, never-ending, and the strobe treats it as ongoing audio and keeps flashing.
-Stopping that session ends the "audio" and the light goes dark.
+So the light hold is just a session playing a silence file on infinite repeat. Nobody hears it,
+it never ends, and the strobe flashes the whole time. Stop the session and the light goes dark.
 
 ### Two requests per emergency button
 
 | Session | Priority | Repeat | Role |
 |---|---|---|---|
-| `<event>-announce` | MEDIUM | 2 | The recorded message, played twice, strobes flashing in sync |
-| `<event>-hold` | LOW | 0 | Silence, forever. Inaudible under the announcement; keeps the strobes lit once it ends |
+| `<event>-announce` | MEDIUM | 2 | The recorded message, played twice, strobes in sync |
+| `<event>-hold` | LOW | 0 | Silence, forever. Inaudible under the announcement, keeps the strobes lit after it |
 
-Both fire on the same press with no delay and no ordering requirement. The pacing is a consequence
-of the priority system, not of any timing the console performs.
+Both fire on the same press. No delay between them, no ordering requirement. The priority system
+handles the sequencing, not the console.
 
-## The behaviour that nearly breaks this
+## The behavior that nearly breaks it
 
-> **Priority does not layer — it terminates.**
-> A higher-priority session **kills** a lower-priority one. It does not duck it, and the lower
-> session does not resume when the higher one finishes. Confirmed audibly: MEDIUM killed LOW, and
-> HIGH killed both.
+In AMP, a higher-priority session kills a lower-priority one. It doesn't duck it, and the lower
+session doesn't come back when the higher one ends. We confirmed this audibly: MEDIUM killed LOW,
+HIGH killed both.
 
-Read naively, that destroys the design — if the MEDIUM announcement kills the LOW hold, the strobes
-go dark exactly when they are supposed to start holding.
+Which sounds fatal for the design above — if the MEDIUM announcement kills the LOW hold, the
+strobes go dark right when they're supposed to start holding.
 
-**It does not, and the reason is directional.** What gets terminated is a *running* low-priority
-session cut down by a *newly started* higher-priority one. The button does the reverse: the
-higher-priority announcement starts first, and the low-priority hold a fraction of a second later.
-The hold is accepted, sits inaudible underneath, and takes over when the announcement ends.
+It works anyway, and the reason is direction. What dies is a *running* low session cut down by a
+*new* higher one. The button does it the other way around: the announcement starts first, the
+hold lands a fraction of a second later. The hold gets accepted, sits silent underneath, and
+takes over when the announcement finishes.
 
-**Verify this on hardware before wiring a whole panel.** Fire the announce session and then
-immediately the hold session, and watch a real strobe. If the light is still flashing after the
-voice stops, the pattern is sound. If it goes dark, fall back to **one session per emergency**
-playing a single playlist (message, message, silence) on infinite repeat — which sidesteps priority
-interaction entirely and halves the request count, at the cost of a slightly less clean All Clear.
-
-This was verified on a live strobe/speaker unit and the two-request pattern held.
+We verified this on a real strobe before wiring a panel, and you should too: fire the announce
+session, immediately fire the hold, and watch the light. Still flashing after the voice stops?
+Wire everything this way. Goes dark? Fall back to one session per emergency playing a playlist
+(message, message, silence) on infinite repeat — that sidesteps priority entirely and halves the
+rule count, at the cost of a slightly messier All Clear.
 
 ## Priority tiers
 
-The enum is `LOW`, `MEDIUM`, `HIGH`. There is no `MID` or `NORMAL` — both are rejected with
-`axis.aam.unknown.priority`. A workable assignment:
+The valid values are exactly `LOW`, `MEDIUM`, `HIGH`. `MID` and `NORMAL` get rejected with
+`axis.aam.unknown.priority`. An assignment that works:
 
-| Tier | Used for | Rationale |
+| Tier | Used for | Why |
 |---|---|---|
-| Background / music | White noise bed | Must fall silent under any emergency |
-| `LOW` | Silent holds, walk test | Inaudible; exists to keep strobes lit |
+| Background / music | White noise bed | Has to go silent under any emergency |
+| `LOW` | Silent holds, walk test | Inaudible; only exists to keep strobes lit |
 | `MEDIUM` | Emergency announcements | Audible over the noise bed |
-| `HIGH` | All Clears | Must cut through anything running |
-| Live paging | Console microphone | A human voice always wins; strobes keep flashing underneath |
+| `HIGH` | All Clears | Has to cut through anything running |
+| Live paging | Console microphone | A human voice always wins; strobes keep flashing under it |
 
 ## All Clear stops, it does not delete
 
-An All Clear button issues a stop against every emergency session unconditionally, then plays the
-All Clear message. Three reasons it is built that way:
+The All Clear button stops every emergency session, whether or not it's running, then plays the
+All Clear message. Three reasons:
 
-- **Deleting a session breaks the button.** Stopping leaves the session in place so the next press
-  works; deleting it means the next press 404s and nothing happens.
-- **The API cannot report whether a session is playing.** Session objects carry no playback state,
-  so there is no way to ask what is currently running. Stopping everything is the only reliable
-  approach.
-- **The operator should not have to remember.** Under stress, nobody should be working out which
-  emergency is active or whether two were declared. Stopping a session that is not running is
-  harmless.
+- Deleting a session breaks its button. The next press 404s and nothing happens. Stopping leaves
+  the session in place, ready for the next press.
+- You can't ask the server what's playing — session objects carry no playback state. Stopping
+  everything is the only reliable move.
+- The operator shouldn't have to remember which emergency is active, or whether two were declared.
+  Stopping a stopped session is harmless, so stop them all.
 
-This is what makes an All Clear button expensive in rule count — one stop per emergency session,
-plus one play for the All Clear message.
+This is why the All Clear button is expensive in rule count: one stop per emergency session, plus
+one play for the message.
 
 ## Wiring the console
 
-The console's documentation describes only one-way and two-way paging actions, and states that a
-button uses a single action. Installed firmware may be ahead of that documentation and offer an HTTP
-request action — but a button still takes only one action, which is a problem for any button that
-must send several requests.
+The console manual only documents one-way and two-way paging actions, and says a button takes a
+single action. The firmware is ahead of the manual — HTTP request is in the action list — but the
+one-action-per-button limit is real. That's a problem when a button needs to send nine requests.
 
-**The soft key event is the bridge.** A soft key event action raises an internal event rather than
-doing anything itself, and the event rules engine can use that event as a condition. Several rules
-sharing one soft key condition all fire on a single press.
+The way around it is the **soft key event**. That action type doesn't do anything itself; it
+raises an internal event, and the rules engine can trigger on it. Several rules sharing the same
+soft key condition all fire on one press.
 
-1. **Display > Configuration > Actions** — create a soft key event action per button that needs more
-   than one request.
+1. **Display > Configuration > Actions** — add a soft key event action for each multi-request
+   button. Name it for the button.
 2. **Display > Configuration > Buttons** — assign the action to the button.
-3. **System > Events > Recipients** — create one recipient for the server: base URL, port 443, the
-   API credentials, certificate validation off for a self-signed certificate. Every rule shares it.
-4. **System > Events > Rules** — one rule per HTTP request. Condition is the soft key event; action
-   is *send notification through HTTPS*; method POST; override the URL per rule with the full API
-   path; put the JSON in the **body** (leave any *message* field empty).
+3. **System > Events > Recipients** — create *one* recipient for the server: base URL, port 443,
+   the API credentials, certificate validation off (the server cert is self-signed). Every rule
+   shares this recipient.
+4. **System > Events > Rules** — one rule per HTTP request. Condition: the soft key event. Action:
+   send notification through HTTPS, method POST, URL overridden per rule with the full API path,
+   JSON in the **body**. If the form also has a *message* field, leave it empty — the API ignores
+   it.
 
-Buttons needing only one request can use a direct HTTP request action instead, though keeping every
-button in the rules engine makes the panel easier to audit.
+A button that only sends one request can use a direct HTTP request action and skip the rules
+engine, though keeping everything in rules makes the panel easier to audit later.
 
 ## Traps
 
-Every one of these produced a symptom that pointed somewhere other than the actual cause.
+Each of these showed us a symptom pointing somewhere other than the real cause. In rough order of
+how much time they cost:
 
-**The API user is a separate account list from the dashboard login.** Identical credentials do not
-mean the API answers. The API account must be created explicitly in the server's API access panel. A
-missing entry produces authentication failures that look exactly like a server too old to have the
-interface at all. This is the single most expensive trap in the whole system — it survived three
-site visits disguised as a version problem.
+**The API user is a separate account list from the dashboard login.** Same username and password
+doesn't matter — if it wasn't created in the server's API Access panel, the API rejects it. And a
+missing API account produces auth failures that look exactly like a server too old to have the
+API at all. This one survived three site visits disguised as a version problem.
 
-**Never conclude "the API is absent" from an authenticated probe.** Sending credentials makes a
-rejected login and a missing route indistinguishable. Probe *without* credentials instead: an
-existing route answers 401 with a `WWW-Authenticate` challenge, an absent route answers 404. Two
-different numbers, no ambiguity. (`probe.js` in this folder does exactly this.)
+**Don't conclude "the API isn't there" from a probe that sends credentials.** A rejected login
+and a missing route look identical that way. Probe without credentials: a route that exists
+answers 401 with a `WWW-Authenticate` challenge, a route that doesn't answers 404. Two different
+numbers, no ambiguity. `probe.js` in this folder does exactly this.
 
-**Never test the API from a browser address bar.** The address bar requests HTML. A JSON-only API
-responds 406 or bounces to the dashboard even when fully authenticated, which reads convincingly as
-"this endpoint does not exist."
+**Don't test the API from a browser address bar.** The address bar asks for HTML, the API only
+speaks JSON, so you get a 406 or a bounce to the dashboard even when your login is fine. Looks
+exactly like "endpoint doesn't exist." Use the dev console.
 
-**A recipient's Test button can return 500 and mean nothing.** Test sends a generic probe without the
-method and body the API expects. A 500 confirms the console reached the server. Only a real button
-press proves the configuration.
+**The recipient's Test button returning 500 means nothing.** Test sends a generic probe without
+the method and body the API wants. If anything, the 500 proves the console reached the server.
+Only a real button press tests the configuration.
 
-**A first 401 is part of digest authentication.** The server challenges, the client answers, then
-succeeds. A 401 followed by success is the protocol working. Only a final 401 is a credential
-problem.
+**A first 401 is digest auth working.** Challenge, response, success — that's the protocol. Only
+a *final* 401 is a credential problem.
 
-**Rules do not appear in the console's actions list.** The event engine and the paging application
-are separate layers. A button whose rules work will still look unconfigured in its display settings.
+**Rules never show up in the console's actions list.** The event engine and the paging app are
+separate layers. A button with working rules still looks unconfigured in its display settings.
+Audit the rules list, not the actions list.
 
-**Command-line HTTP clients may fail where a browser succeeds.** On Windows Server, clients using
-Schannel fail the server's mid-handshake TLS renegotiation — System32 curl, Git curl, PowerShell and
-.NET all die, which looks like a network or firewall problem. The browser's TLS stack works. Running
-the provisioning tool inside the browser's developer console sidesteps it entirely; that is why
-`amp-console.js` exists and implements digest auth in JavaScript.
+**Command-line HTTP clients can all fail where the browser works.** On Windows Server, anything
+using Schannel — System32 curl, Git curl, PowerShell, .NET — dies on the server's mid-handshake
+TLS renegotiation. Looks like a network or firewall problem; it isn't. The browser has its own
+TLS stack and works fine, which is why `amp-console.js` exists and does digest auth in
+JavaScript.
 
-**An exclamation mark in a password is eaten by Windows batch.** With delayed expansion enabled,
-`set PASS=abc!` silently becomes `abc`, producing a wall of 401s that reads as a broken API. Use
-PowerShell or the browser.
+**Windows batch eats exclamation marks.** With delayed expansion on, `set PASS=abc!` silently
+becomes `abc`, and you get a wall of 401s that reads as a broken API. Use PowerShell or the
+browser.
 
-**A substring match on a zone name can aim an emergency at the wrong zone.** A site-wide zone called
-"All zones" is a substring of a noise-bed zone called "All Zones White Noise". A first-match-wins
-lookup silently aims every emergency at the noise bed and returns a perfectly healthy 200 doing it.
-Match exact names first, and warn on ambiguity rather than resolving it quietly.
+**Substring matching can aim an emergency at the wrong zone.** Real example: a site-wide zone
+named "All zones" next to a noise-bed zone named "All Zones White Noise". First-substring-match
+picks the noise bed, every emergency fires into it, and everything returns 200. Match exact names
+first and warn on ambiguity instead of resolving it quietly.
 
-**Repeat is a count, not a duration.** A walk test built as "play for thirty minutes" must derive its
-repeat count from the real file lengths. Hard-coding a number means the run time silently doubles the
-day someone swaps the tone file.
+**Repeat is a count, not a duration.** A "thirty minute" walk test has to derive its repeat count
+from the actual file lengths. Hard-code the number and the runtime silently doubles the day
+someone swaps the tone file.
 
-**A factory-new device is invisible to the server.** It ships with no ACAP installed, and the server
-cannot discover it until the management application is present. The empty discovery table looks
-exactly like a dead switch port. Probe the device directly by mDNS and its own web interface before
-suspecting the network.
+**A factory-new device is invisible to the server.** It ships with no ACAP, and the server can't
+discover it until the management app is installed. The empty discovery table looks exactly like a
+dead switch port. Check the device directly — mDNS, its own web page — before blaming the
+network.
 
-**Maintenance mode makes a strobe flash white on its own.** If white is also an emergency colour, a
-device left in maintenance mode is indistinguishable from an active alert. Clear it before judging
-any white flash.
+**Maintenance mode makes a strobe flash white on its own.** If white is also an emergency colour,
+you can't tell them apart by looking. Clear maintenance mode before judging any white flash.
 
 ## API surface and its limits
 
-The v1.2 surface is narrow: `audioFiles`, `visualProfiles`, `targets` and `audioSessions`. There is
-no devices, sinks, zones or system endpoint. Consequences worth knowing before designing around it:
+v1.2 gives you `audioFiles`, `visualProfiles`, `targets`, and `audioSessions`. That's it — no
+devices, sinks, zones, or system endpoints. What that means in practice:
 
-- **Visual profiles cannot be created programmatically.** `POST visualProfiles` returns 405 — strobe
-  colours are dashboard-only. A deleted profile must be rebuilt by hand, so document them.
-- **Zone membership cannot be set through the API.** Devices are assigned to zones in the dashboard.
-- **Sessions expose no playback state.** There is no way to ask whether an emergency is active.
-- **Sessions persist across a service restart.** Provision once; they survive.
-- **Audio libraries are synchronised folders.** Dropping a file into the library folder is the upload
-  mechanism — the server indexes it within seconds. There is no upload endpoint.
-- **A one-shot play call silently ignores the visual profile** and reports it as `DEFAULT`. The strobe
-  colour must ride on a pre-created session, which is a large part of why this design uses sessions.
+- **Strobe colours are GUI-only.** `POST visualProfiles` returns 405. A deleted profile has to be
+  rebuilt by hand, so document them (screenshots are fine).
+- **Zone membership is GUI-only too.** Devices get assigned to zones in the dashboard.
+- **No playback state.** You cannot ask whether an emergency is currently running.
+- **Sessions survive a service restart.** Provision once.
+- **There's no upload endpoint.** The libraries are synced folders — drop a file in and the server
+  indexes it within seconds.
+- **One-shot play calls silently drop the visual profile** and report it as `DEFAULT`. Colour has
+  to ride on a pre-created session. This is most of the reason the design uses sessions at all.
 
 ## Commissioning without alarming the building
 
-Most sites cannot fire a building-wide emergency to test a button. Build the test surfaces into the
-zone design rather than improvising them later:
+Most sites can't fire a building-wide emergency just to test a button. Build the test surfaces
+into the zone design up front:
 
 - **A small zone at the console** — a few speakers, no strobes — with a button that plays the All
-  Clear there. Ten seconds, any time of day, proves console, credentials and server.
-- **A technical-space zone** with one speaker and one strobe, so the full announce-then-hold
-  behaviour can be watched with nothing audible in occupied areas.
-- **A walk test** with an unmistakably non-emergency character for coverage checks.
+  Clear there. Ten seconds, any time of day, proves console + credentials + server.
+- **A technical-space zone** with one speaker and one strobe, so you can watch the full
+  announce-then-hold behavior with nothing audible outside the closet.
+- **A walk test** that can't be mistaken for an alarm, for coverage checks.
 
-Entering rules is silent — nothing fires until a button is pressed — so configuration can proceed
-during occupied hours and only the final acceptance needs a scheduled window.
+Entering rules is silent — nothing fires until a press — so most of the work can happen during
+business hours. Only the final acceptance needs an out-of-hours window.
 
 ## The credential is the weak point
 
-> The console authenticates on **every** button press. If the API account is deleted, disabled,
-> expired or renamed, every emergency button stops working — **silently**. The panel looks normal,
-> the button lights up, and nothing happens.
+The console logs into the server on every button press. Delete, disable, expire, or rename that
+API account and every emergency button dies — silently. The panel looks normal, the button lights
+up, nothing plays, and nobody finds out until someone needs it.
 
-**Name the account for the customer, never for the integrator**, so that offboarding a contractor
-cannot take the emergency system down with it. Ensure it is exempt from password expiry, or that
-rotation is a documented procedure covering server and console together. Record it as infrastructure
-belonging to the emergency system so an account review does not remove it.
+So: name the account for the **customer**, never the integrator. An integrator-named account is
+exactly what gets swept in an offboarding, and that sweep takes the emergency system with it.
+Keep it out of any forced password expiry, or write a rotation procedure that covers server and
+console together. Record it as infrastructure belonging to the emergency system so an account
+review doesn't clean it up.
 
-Recommend a monthly press of the local test button. It is the cheapest possible detector for this
-failure mode.
+And have the customer press the local test button monthly. It's a ten-second check and it's the
+only cheap detector for this failure mode.
 
 ## Tooling in this folder
 
 | File | Purpose |
 |---|---|
-| `amp-console.js` | Paste into the dashboard's dev console. Implements digest auth in JS, discovers real IDs, builds and provisions the sessions by name, and prints the console rule sheet. |
-| `amp-panel.js` | A UI over the same API, instead of typing into the console. |
-| `probe.js` | Credential-free probe that distinguishes a missing route from a rejected login, a disabled public API, and a proxy in front. |
-| `names.js` | Name-to-ID resolution with exact-match-first and ambiguity warnings. |
+| `amp-console.js` | Paste into the dashboard's dev console. Digest auth in JS, discovers real IDs, builds and provisions the sessions by name, prints the console rule sheet. |
+| `amp-panel.js` | A clickable UI over the same API, for when you'd rather not type into a console. |
+| `probe.js` | Credential-free probe. Tells apart a missing route, a rejected login, a disabled public API, and a proxy in front. |
+| `names.js` | Name-to-ID resolution, exact-match first, warns on ambiguity. |
+| `virtual-console/` | Two-file PHP page that renders the whole panel and replays each button's rule set. Bench replica / re-test surface. |
 | `version.ps1` / `version.cmd` | Read the installed server version off the box, including binary FileVersion (the registry lies after an in-place upgrade). |
 | `silence-60s.wav`, `silence-30s.mp3` | The silence files the holds and walk test depend on. |

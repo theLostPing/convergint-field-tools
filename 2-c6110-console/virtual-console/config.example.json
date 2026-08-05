@@ -1,0 +1,28 @@
+{
+  "title": "Virtual Paging Console — <SITE NAME> bench",
+  "keys": 12,
+  "server": "https://<AMP_SERVER_IP>",
+  "user": "<API_ACCESS_USER>",
+  "pass": "<API_ACCESS_PASSWORD>",
+  "note": "Copy this file to config.json (git-ignored) and fill it in. Session names and fileIds are SITE-SPECIFIC — build this button map from the amp.rules() sheet for your site, never copy IDs from another install. 'class' picks the button colour: fire, tornado, lightning, wv, clear, test.",
+  "buttons": {
+    "3":  { "name": "Walk Test",           "class": "test",
+            "rules": [ { "play": "walk-test", "fileIds": ["<TEST_FILE_ID>", "<SILENCE30_FILE_ID>"], "repeat": 48 } ] },
+    "6":  { "name": "Building All Clear",  "class": "clear",
+            "rules": [ { "stop": "fire-announce" }, { "stop": "wv-hold" }, { "stop": "wv-announce" },
+                       { "stop": "tornado-hold" }, { "stop": "tornado-announce" },
+                       { "stop": "lightning-hold" }, { "stop": "lightning-announce" }, { "stop": "walk-test" },
+                       { "play": "allclear", "fileIds": ["<ALLCLEAR_FILE_ID>"], "repeat": 1 } ] },
+    "7":  { "name": "Fire",                "class": "fire",
+            "rules": [ { "play": "fire-announce", "fileIds": ["<FIRE_FILE_ID>"], "repeat": 0 } ] },
+    "8":  { "name": "Tornado",             "class": "tornado",
+            "rules": [ { "play": "tornado-announce", "fileIds": ["<TORNADO_FILE_ID>"], "repeat": 2 },
+                       { "play": "tornado-hold", "fileIds": ["<SILENCE60_FILE_ID>"], "repeat": 0 } ] },
+    "9":  { "name": "Lightning",           "class": "lightning",
+            "rules": [ { "play": "lightning-announce", "fileIds": ["<LIGHTNING_FILE_ID>"], "repeat": 2 },
+                       { "play": "lightning-hold", "fileIds": ["<SILENCE60_FILE_ID>"], "repeat": 0 } ] },
+    "12": { "name": "Security Event",      "class": "wv",
+            "rules": [ { "play": "wv-announce", "fileIds": ["<WV_FILE_ID>"], "repeat": 2 },
+                       { "play": "wv-hold", "fileIds": ["<SILENCE60_FILE_ID>"], "repeat": 0 } ] }
+  }
+}

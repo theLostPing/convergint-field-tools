@@ -107,6 +107,10 @@ never the whole building. The IDs are the numbers `discover()` showed you.
 - stop it: `await amp.stop('fire-announce')`
 - all-clear: `await amp.fire('allclear', ALLCLEAR_ID, 1)`
 
+Want clickable buttons instead of typed calls? `virtual-console/` is a two-file PHP page that
+renders the whole panel and replays each button's exact rule set — deploy it on any PHP host
+that can reach the AMP server. Great as a bench replica or for re-testing after changes.
+
 ## Wiring the buttons
 When you ran `amp.rules()` a minute ago, it printed all your button rules right there in the console
 — scroll up and they're sitting there. (It also saved a copy as `console-rules.txt` in your browser's

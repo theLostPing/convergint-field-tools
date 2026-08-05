@@ -97,7 +97,7 @@
      <div class="step">
        <h3>1 · Connect</h3>
        <div class="mini">The API Access user — not the dashboard login.</div>
-       <div class="row"><input id="ap-user" placeholder="user" value="Convergint">
+       <div class="row"><input id="ap-user" placeholder="API user" value="">
                         <input id="ap-pass" placeholder="password" type="text" value=""></div>
        <button id="ap-connect">Connect &amp; read the box</button>
        <button class="ghost" id="ap-diag">Which API is live?</button>
@@ -125,7 +125,7 @@
      </div>
 
      <div class="step">
-       <h3>4 · MDF test <span style="font-size:15px;color:#94a3b8">(zon_12, real D4200)</span></h3>
+       <h3>4 · Deciding test <span style="font-size:15px;color:#94a3b8">(aim at your closet/test zone, watch a real strobe)</span></h3>
        <button class="warn" id="ap-mdf">Run the deciding test</button>
        <button class="ghost" id="ap-mdfstop">Stop + clean up</button>
      </div>
@@ -192,9 +192,18 @@
         say((bad ? '  !! ' : '  ok ') + s.customId + '  ' + s.prio + '  vp=' + s.visualProfileId +
             '  -> ' + s.targets.join(', '), bad ? 'r' : null);
       });
-      var site = r.SESSIONS.find(function (s) { return s.customId === 'fire-announce'; });
-      if (site && String(site.targets).indexOf('zon_10') !== -1)
-        say('STOP — site resolved to zon_10, the WHITE NOISE zone. Fix before provisioning.', 'r');
+      // Universal noise-bed guard: flag any resolved target whose NAME says noise.
+      // ("All zones" is a substring of "All Zones White Noise" on real sites — a
+      // first-match-wins lookup aims every emergency at the noise bed with a clean 200.)
+      var tgts = (amp._last && amp._last.targets) || [];
+      r.SESSIONS.forEach(function (s) {
+        s.targets.forEach(function (id) {
+          var t = tgts.find(function (x) { return String(x.id) === String(id); });
+          var nm = t && (t.niceName || t.name) || '';
+          if (/noise/i.test(nm))
+            say('STOP — ' + s.customId + ' resolved to "' + nm + '", a NOISE zone. Fix before provisioning.', 'r');
+        });
+      });
     });
   };
 
@@ -212,14 +221,24 @@
   $('ap-mdf').onclick = function () {
     clear();
     wrap(async function () {
-      say('Watch the MDF strobe. This is the test that decides the button design.', 'y');
-      say('firing tornado-announce (MEDIUM) x2 …');
-      say('  -> ' + (await api('POST', 'audioSessions/custom/tornado-announce/playAudioFiles', { fileIds: ['14'], repeat: 2 })).status);
+      // No hardcoded file IDs: the announce/hold pair comes from the build,
+      // so this fires exactly what the real button will fire on THIS site.
+      if (typeof BUTTONS === 'undefined' || !BUTTONS.length) {
+        say('Run step 2 (Build) first — the test fires the built tornado rules, nothing is hardcoded.', 'r'); return;
+      }
+      var ann = BUTTONS.find(function (b) { return b.play === 'tornado-announce'; });
+      var hold = BUTTONS.find(function (b) { return b.play === 'tornado-hold'; });
+      if (!ann || !hold) { say('The build has no tornado-announce/tornado-hold pair — rebuild first.', 'r'); return; }
+      say('Watch the strobe in your test zone. This is the test that decides the button design.', 'y');
+      say('firing tornado-announce (MEDIUM) x' + ann.repeat + ' …');
+      say('  -> ' + (await api('POST', 'audioSessions/custom/tornado-announce/playAudioFiles',
+                     { fileIds: [String(ann.fileId)], repeat: ann.repeat })).status);
       say('firing tornado-hold (LOW) silence, repeat 0 …');
-      say('  -> ' + (await api('POST', 'audioSessions/custom/tornado-hold/playAudioFiles', { fileIds: ['20'], repeat: 0 })).status);
+      say('  -> ' + (await api('POST', 'audioSessions/custom/tornado-hold/playAudioFiles',
+                     { fileIds: [String(hold.fileId)], repeat: 0 })).status);
       say('');
-      say('Message plays twice (~32s). THEN WATCH:', 'y');
-      say('  strobe STILL FLASHING after the voice stops = design confirmed, wire all 21 rules', 'g');
+      say('Message plays twice. THEN WATCH:', 'y');
+      say('  strobe STILL FLASHING after the voice stops = design confirmed, wire every rule', 'g');
       say('  strobe DARK = the announcement killed the hold, switch to one session per emergency', 'r');
     });
   };
